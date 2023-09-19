@@ -28,7 +28,7 @@
 #include <Profile/TauPluginInternals.h>
 #ifdef TAU_ADIOS
 #include "adiost_callback_api.h"
-#endif
+#endif                                                    
 #include "inttypes.h"
 
 /* Can't include TauMmapMemMgr, becuase it's c++ header.  So declare the
@@ -52,7 +52,7 @@ extern int Tau_get_usesMPI();
 
 #define TAU_MAX_REQUESTS  4096
 #ifndef TAU_MAX_MPI_RANKS
-#define TAU_MAX_MPI_RANKS 8
+#define TAU_MAX_MPI_RANKS 1024
 #endif /* ifndef */
 
 /* NOTE: We can either track communicator or paths, but not both! */
@@ -95,6 +95,8 @@ extern int TauBeaconSubscribe(char *topic_name, char *topic_scope, void (*handle
 extern void TauBeacon_MPI_T_CVAR_handler(BEACON_receive_topic_t * caught_topic);
 #endif /* TAU_BEACON */
 
+FILE* fp;
+
 /* JCL: Optimized rank translation with cache */
 int TauTranslateRankToWorld(MPI_Comm comm, int rank);
 
@@ -136,7 +138,7 @@ static int procid_0;
     PMPI_Comm_size(comm, &commSize); \
     if ( commRank == root ) { \
       if (sendtype != MPI_DATATYPE_NULL) { \
-        PMPI_Type_size( sendtype, &typesize ); \
+      PMPI_Type_size( sendtype, &typesize ); \
       } \
       for (i = 0; i<commSize; i++) { \
 	sendcount += counts[i]; \
@@ -199,8 +201,8 @@ static double* array_stats (TAU_MPICH3_CONST int *counts, MPI_Datatype type, MPI
         PMPI_Type_size( sendtype, &typesize ); \
     } else { \
 	if (recvtype != MPI_DATATYPE_NULL) { \
-          PMPI_Type_size( recvtype, &typesize ); \
-	} \
+        PMPI_Type_size( recvtype, &typesize ); \
+    } \
     } \
     for (i = 0; i<commSize; i++) { \
       sendcount += counts[i]; \
@@ -409,10 +411,15 @@ MPI_Comm comm;
   if (recvtype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( recvtype, &typesize );
   }
-  TAU_ALLGATHER_DATA(typesize*recvcount);
+  // TAU_ALLGATHER_DATA(typesize*recvcount);gather
+
 
   TIMER_EXIT_COLLECTIVE_EXCH_ALL_EVENT("MPI_Allgather",typesize*sendcount,typesize*recvcount,0,comm);
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    fprintf(fp, "%s,%d,%d,,%p,\n", "MPI_Allgather()", -1, typesize * sendcount, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -440,13 +447,31 @@ MPI_Comm comm;
     PMPI_Type_size( recvtype, &typesize );
   }
 
-  track_allvector(TAU_ALLGATHER_DATA, recvcounts, typesize);
+  // track_allvector(TAU_ALLGATHER_DATA, recvcounts, typesize);
 
   if (TAU_DO_TIMER_EXIT) {
     double tmp_array[5] = {0.0};
     TIMER_EXIT_COLLECTIVE_EXCH_V_EVENT("MPI_Allgatherv","sendbytes",sendcount*typesize,array_stats(recvcounts,recvtype,comm,tmp_array),0,comm);
   }
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    //int tracksize = 0;
+    //tracksize = sum_array(recvcounts, recvtype, comm);
+    int commSize, i, recvsize;
+    PMPI_Comm_size(comm, &commSize);
+    PMPI_Type_size(recvtype, &recvsize);
+    char recvcnt[2048];
+    char temp[32];
+    for (i = 0; i < commSize; i++) {
+        if (i == 0)
+            sprintf(temp, "%d-%d", TauTranslateRankToWorld(comm, i), recvcounts[i] * recvsize);
+        else
+            sprintf(temp, ".%d-%d", TauTranslateRankToWorld(comm, i), recvcounts[i] * recvsize);
+        strcat(recvcnt, temp);
+    }
+    fprintf(fp, "%s,%d,%d,%s,%p,\n", "MPI_Allgatherv()", -1, -1, recvcnt, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -471,10 +496,14 @@ MPI_Comm comm;
   if (datatype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( datatype, &typesize );
   }
-  TAU_ALLREDUCE_DATA(typesize*count);
+  // TAU_ALLREDUCE_DATA(typesize*count);
 
   TIMER_EXIT_COLLECTIVE_EXCH_EVENT("MPI_Allreduce",typesize*count,0,comm);
   TAU_PROFILE_STOP(tautimer);
+  
+  #ifdef TAU_EXP_TRACK_COMM
+    fprintf(fp, "%s,%d,%d,,%p,%d\n", "MPI_Allreduce()", -1, typesize * count, (intptr_t)comm, count);
+  #endif
 
   return returnVal;
 }
@@ -501,10 +530,14 @@ MPI_Comm comm;
   if (sendtype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( sendtype, &typesize );
   }
-  TAU_ALLTOALL_DATA(typesize*sendcount);
+  // TAU_ALLTOALL_DATA(typesize*sendcount);
 
   TIMER_EXIT_COLLECTIVE_EXCH_ALL_EVENT("MPI_Alltoall",typesize*sendcount,typesize*recvcnt,0,comm);
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    fprintf(fp, "%s,%d,%d,,%p,\n", "MPI_Alltoall()", -1, typesize * sendcount, (intptr_t)comm);
+#endif
 
   return returnVal;
 }
@@ -521,7 +554,7 @@ MPI_Datatype recvtype;
 MPI_Comm comm;
 {
   int   returnVal;
-  int tracksize = 0;
+  // int tracksize = 0;
 
   TAU_PROFILE_TIMER(tautimer, "MPI_Alltoallv()",  " ", TAU_MESSAGE);
   TAU_PROFILE_START(tautimer);
@@ -530,10 +563,10 @@ MPI_Comm comm;
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Alltoallv( sendbuf, sendcnts, sdispls, sendtype, recvbuf, recvcnts, rdispls, recvtype, comm );
 
-  tracksize = sum_array(sendcnts, sendtype, comm);
-  tracksize += sum_array(recvcnts, recvtype, comm);
+  // tracksize = sum_array(sendcnts, sendtype, comm);
+  // tracksize += sum_array(recvcnts, recvtype, comm);
 
-  TAU_ALLTOALL_DATA(tracksize);
+  // TAU_ALLTOALL_DATA(tracksize);
 
   if (TAU_DO_TIMER_EXIT) {
     double tmp_array1[5] = {0.0};
@@ -541,6 +574,29 @@ MPI_Comm comm;
     TIMER_EXIT_COLLECTIVE_EXCH_AAV_EVENT("MPI_Alltoallv",array_stats(sendcnts,sendtype,comm,tmp_array1),array_stats(recvcnts,recvtype,comm,tmp_array2),comm);
   }
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    //int tracksizesend = 0;
+    //int tracksizerecv = 0;
+    //tracksizesend = sum_array(sendcnts, sendtype, comm);
+    //tracksizerecv = sum_array(recvcnts, recvtype, comm);
+
+
+    int commSize, i, sendsize, recvsize;
+    PMPI_Comm_size(comm, &commSize);
+    PMPI_Type_size(recvtype, &recvsize);
+    char recvcnt[2048];
+    char temp[32];
+    for (i = 0; i < commSize; i++) {
+        if (i == 0) 
+            sprintf(temp, "%d-%d", TauTranslateRankToWorld(comm, i), *(recvcnts + i) * recvsize);
+        else
+            sprintf(temp, ".%d-%d", TauTranslateRankToWorld(comm, i), *(recvcnts + i) * recvsize);
+        strcat(recvcnt, temp);
+    }
+    
+    fprintf(fp, "%s,%d,%d,%s,%p,\n", "MPI_Alltoallv()", -1, -1, recvcnt, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -559,6 +615,10 @@ MPI_Comm comm;
   TIMER_EXIT_COLLECTIVE_SYNC_EVENT("MPI_Barrier",comm);
   TAU_PROFILE_STOP(tautimer);
 
+  #ifdef TAU_EXP_TRACK_COMM
+    fprintf(fp, "%s,,,,%p,\n", "MPI_Barrier()", (intptr_t)comm);
+#endif
+
   return returnVal;
 }
 
@@ -571,14 +631,14 @@ MPI_Comm comm;
 {
   int   returnVal;
   int   typesize = 0;
-#ifdef TAU_MPI_BCAST_HISTOGRAM
-  TAU_REGISTER_CONTEXT_EVENT(c1, "Message size in MPI_Bcast [0, 1KB)");
-  TAU_REGISTER_CONTEXT_EVENT(c2, "Message size in MPI_Bcast [1KB, 10KB)");
-  TAU_REGISTER_CONTEXT_EVENT(c3, "Message size in MPI_Bcast [10KB, 100KB)");
-  TAU_REGISTER_CONTEXT_EVENT(c4, "Message size in MPI_Bcast [100KB, 1000KB)");
-  TAU_REGISTER_CONTEXT_EVENT(c5, "Message size in MPI_Bcast [1000KB+]");
+// #ifdef TAU_MPI_BCAST_HISTOGRAM
+//   TAU_REGISTER_CONTEXT_EVENT(c1, "Message size in MPI_Bcast [0, 1KB)");
+//   TAU_REGISTER_CONTEXT_EVENT(c2, "Message size in MPI_Bcast [1KB, 10KB)");
+//   TAU_REGISTER_CONTEXT_EVENT(c3, "Message size in MPI_Bcast [10KB, 100KB)");
+//   TAU_REGISTER_CONTEXT_EVENT(c4, "Message size in MPI_Bcast [100KB, 1000KB)");
+//   TAU_REGISTER_CONTEXT_EVENT(c5, "Message size in MPI_Bcast [1000KB+]");
 
-#endif
+// #endif
 
   TAU_PROFILE_TIMER(tautimer, "MPI_Bcast()",  " ", TAU_MESSAGE);
   TAU_PROFILE_START(tautimer);
@@ -591,31 +651,35 @@ MPI_Comm comm;
     PMPI_Type_size( datatype, &typesize );
   }
 
-#ifdef TAU_MPI_BCAST_HISTOGRAM
-  unsigned long long volume = typesize * count;
-  if (volume  < 1024) {
-    TAU_CONTEXT_EVENT(c1, volume);
-  } else {
-    if (volume < 10240) {
-      TAU_CONTEXT_EVENT(c2, volume);
-    } else {
-      if (volume < 102400) {
-        TAU_CONTEXT_EVENT(c3, volume);
-      } else {
-        if (volume < 1024000) {
-            TAU_CONTEXT_EVENT(c4, volume);
-        } else {
-          TAU_CONTEXT_EVENT(c5, volume);
-        }
-      }
-    }
-  }
-#endif
+// #ifdef TAU_MPI_BCAST_HISTOGRAM
+//   unsigned long long volume = typesize * count;
+//   if (volume  < 1024) {
+//     TAU_CONTEXT_EVENT(c1, volume);
+//   } else {
+//     if (volume < 10240) {
+//       TAU_CONTEXT_EVENT(c2, volume);
+//     } else {
+//       if (volume < 102400) {
+//         TAU_CONTEXT_EVENT(c3, volume);
+//       } else {
+//         if (volume < 1024000) {
+//             TAU_CONTEXT_EVENT(c4, volume);
+//         } else {
+//           TAU_CONTEXT_EVENT(c5, volume);
+//         }
+//       }
+//     }
+//   }
+// #endif
 
-  TAU_BCAST_DATA(typesize*count);
+  // TAU_BCAST_DATA(typesize*count);
 
   TIMER_EXIT_COLLECTIVE_EXCH_EVENT("MPI_Bcast",typesize*count,root,comm);
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    fprintf(fp, "%s,%d,%d,,%p,\n", "MPI_Bcast()", TauTranslateRankToWorld(comm, root), typesize * count, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -645,12 +709,16 @@ MPI_Comm comm;
   if (recvtype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( recvtype, &typesize );
   }
-  if (rank == root) {
-    TAU_GATHER_DATA(typesize*recvcount);
-  }
+  // if (rank == root) {
+  //   TAU_GATHER_DATA(typesize*recvcount);
+  // }
 
   TIMER_EXIT_COLLECTIVE_EXCH_ALL_EVENT("MPI_Gather",typesize*sendcnt,typesize*recvcount,root,comm);
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    fprintf(fp, "%s,%d,%d,,%p,\n", "MPI_Gather()", TauTranslateRankToWorld(comm, root), typesize * recvcount, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -667,6 +735,8 @@ int root;
 MPI_Comm comm;
 {
   int   returnVal;
+  int typesize;
+  PMPI_Type_size(sendtype, &typesize);
 
   TAU_PROFILE_TIMER(tautimer, "MPI_Gatherv()",  " ", TAU_MESSAGE);
   TAU_PROFILE_START(tautimer);
@@ -675,17 +745,31 @@ MPI_Comm comm;
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Gatherv( sendbuf, sendcnt, sendtype, recvbuf, recvcnts, displs, recvtype, root, comm );
 
-  track_vector(TAU_GATHER_DATA, recvcnts, recvtype);
+  // track_vector(TAU_GATHER_DATA, recvcnts, recvtype);
 
   if (TAU_DO_TIMER_EXIT) {
     double tmp_array[5] = {0.0};
-    int typesize = 0;
-    if (sendtype != MPI_DATATYPE_NULL) {
-      PMPI_Type_size( sendtype, &typesize );
-    }
     TIMER_EXIT_COLLECTIVE_EXCH_V_EVENT("MPI_Gatherv","sendbytes",sendcnt*typesize,array_stats(recvcnts,recvtype,comm,tmp_array),root,comm);
   }
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+   /* int tracksize = 0;
+    tracksize = sum_array(recvcnts, recvtype, comm);*/
+    int commSize, i, recvsize;
+    PMPI_Comm_size(comm, &commSize);
+    PMPI_Type_size(recvtype, &recvsize);
+    char recvcnt[2048];
+    char temp[32];
+    for (i = 0; i < commSize; i++) {
+        if (i == 0)
+            sprintf(temp, "%d-%d", TauTranslateRankToWorld(comm, i), *(recvcnts + i) * recvsize);
+        else
+            sprintf(temp, ".%d-%d", TauTranslateRankToWorld(comm, i), *(recvcnts + i) * recvsize);
+        strcat(recvcnt, temp);
+    }
+    fprintf(fp, "%s,%d,%d,%s,%p,\n", "MPI_Gatherv()", TauTranslateRankToWorld(comm, root), -1, recvcnt, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -742,10 +826,26 @@ MPI_Comm comm;
   if (datatype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( datatype, &typesize );
   }
-  TAU_REDUCESCATTER_DATA(typesize*(*recvcnts));
+  // TAU_REDUCESCATTER_DATA(typesize*(*recvcnts));
 
   TIMER_EXIT_COLLECTIVE_EXCH_EVENT("MPI_Reduce_scatter",typesize*(*recvcnts),0,comm);
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    int commSize, i, recvsize;
+    PMPI_Comm_size(comm, &commSize);
+    PMPI_Type_size(datatype, &recvsize);
+    char recvcnt[2048];
+    char temp[32];
+    for (i = 0; i < commSize; i++) {
+        if (i == 0)
+            sprintf(temp, "%d-%d", TauTranslateRankToWorld(comm, i), *(recvcnts + i) * recvsize);
+        else
+            sprintf(temp, ".%d-%d", TauTranslateRankToWorld(comm, i), *(recvcnts + i) * recvsize);
+        strcat(recvcnt, temp);
+    }
+    fprintf(fp, "%s,%d,%d,%s,%p,\n", "MPI_Reduce_scatter()", -1, -1, recvcnt, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -771,10 +871,14 @@ MPI_Comm comm;
   if (datatype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( datatype, &typesize );
   }
-  TAU_REDUCE_DATA(typesize*count);
+  // TAU_REDUCE_DATA(typesize*count);
 
   TIMER_EXIT_COLLECTIVE_EXCH_EVENT("MPI_Reduce",typesize*count,root,comm);
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    fprintf(fp, "%s,%d,%d,,%p,\n", "MPI_Reduce()", TauTranslateRankToWorld(comm, root), typesize * count, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -799,10 +903,16 @@ MPI_Comm comm;
   if (datatype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( datatype, &typesize );
   }
-  TAU_SCAN_DATA(typesize*count);
+  // TAU_SCAN_DATA(typesize*count);
 
   TIMER_EXIT_COLLECTIVE_EXCH_EVENT("MPI_Scan",typesize*count,0,comm);
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    int i;
+    PMPI_Comm_rank(comm, &i);
+    fprintf(fp, "%s,%d,%d,,%p,\n", "MPI_Scan()", -1, typesize * count, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -818,7 +928,7 @@ int root;
 MPI_Comm comm;
 {
   int   returnVal;
-  int   typesize = 0;
+  int   typesize;
 
   TAU_PROFILE_TIMER(tautimer, "MPI_Scatter()",  " ", TAU_MESSAGE);
   TAU_PROFILE_START(tautimer);
@@ -829,10 +939,14 @@ MPI_Comm comm;
   if (sendtype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( sendtype, &typesize );
   }
-  TAU_SCATTER_DATA(typesize*sendcnt);
+  // TAU_SCATTER_DATA(typesize*sendcnt);
 
   TIMER_EXIT_COLLECTIVE_EXCH_ALL_EVENT("MPI_Scatter",typesize*sendcnt,typesize*recvcnt,root,comm);
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    fprintf(fp, "%s,%d,%d,,%p,\n", "MPI_Scatter()", TauTranslateRankToWorld(comm, root), typesize * sendcnt, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -849,6 +963,8 @@ int root;
 MPI_Comm comm;
 {
   int returnVal;
+  int typesize;
+  PMPI_Type_size(recvtype, &typesize);
 
   TAU_PROFILE_TIMER(tautimer, "MPI_Scatterv()",  " ", TAU_MESSAGE);
   TAU_PROFILE_START(tautimer);
@@ -857,17 +973,33 @@ MPI_Comm comm;
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Scatterv( sendbuf, sendcnts, displs, sendtype, recvbuf, recvcnt, recvtype, root, comm );
 
-  track_vector(TAU_SCATTER_DATA, sendcnts, typesize);
+  // track_vector(TAU_SCATTER_DATA, sendcnts, typesize);
 
   if (TAU_DO_TIMER_EXIT) {
     double tmp_array[5] = {0.0};
-    int typesize = 0;
-    if (sendtype != MPI_DATATYPE_NULL) {
-      PMPI_Type_size( sendtype, &typesize );
-    }
     TIMER_EXIT_COLLECTIVE_EXCH_V_EVENT("MPI_Scatterv","recvbytes",recvcnt*typesize,array_stats(sendcnts,recvtype,comm,tmp_array),root,comm);
   }
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+  /*  int tracksize = 0;
+    tracksize = sum_array(sendcnts, sendtype, comm);*/
+
+    int commSize, i, sendsize;
+    PMPI_Comm_size(comm, &commSize);
+    PMPI_Type_size(sendtype, &sendsize);
+
+    char sendcnt[2048];
+    char temp[32];
+    for (i = 0; i < commSize; i++) {
+        if (i == 0)
+            sprintf(temp, "%d-%d", TauTranslateRankToWorld(comm, i), sendcnts[i] * sendsize);
+        else
+            sprintf(temp, ".%d-%d", TauTranslateRankToWorld(comm, i), sendcnts[i] * sendsize);
+        strcat(sendcnt, temp);
+    }
+    fprintf(fp, "%s,%d,%s,%d,%p,\n", "MPI_Scatterv()", TauTranslateRankToWorld(comm, root), sendcnt, -1, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -1882,6 +2014,10 @@ int  MPI_Finalize(  )
   tau_mpi_finalized = 1;
 #endif /* TAU_MPC */
 
+#ifdef TAU_EXP_TRACK_COMM
+  fclose(fp);
+#endif
+
   return returnVal;
 }
 
@@ -2012,13 +2148,11 @@ char *** argv;
 
 #ifdef TAU_ADIOS2
     int provided;
-    TAU_VERBOSE("%s Initializing with PMPI_Init_thread\n", __func__);
     returnVal = PMPI_Init_thread( argc, argv, MPI_THREAD_MULTIPLE, &provided );
     if (provided != MPI_THREAD_MULTIPLE && provided != MPI_THREAD_FUNNELED) {
       fprintf(stderr, "ERROR!!!  MPI implementation doesn't provide threaded support.\nADIOS2 output from TAU likely won't work.\n");
     }
 #else
-    TAU_VERBOSE("%s Initializing with PMPI_Init\n", __func__);
     returnVal = PMPI_Init( argc, argv );
 #endif
 
@@ -2094,6 +2228,14 @@ char *** argv;
   }
 #endif /* _AIX */
 #endif /* TAU_WINDOWS */
+
+#ifdef TAU_EXP_TRACK_COMM
+  int myrank;
+  PMPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+  char fname[16];
+  sprintf(fname, "%s%d", "params", myrank);
+  fp = fopen(fname, "a");
+#endif
 
   return returnVal;
 }
@@ -2186,6 +2328,14 @@ int *provided;
   }
 #endif /* _AIX */
 #endif /* TAU_WINDOWS */
+
+#ifdef TAU_EXP_TRACK_COMM
+  int myrank;
+  PMPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+  char fname[16];
+  sprintf(fname, "%s%d", "params", myrank);
+  fp = fopen(fname, "a");
+#endif
 
   return returnVal;
 }
@@ -2304,14 +2454,14 @@ MPI_Comm comm;
   TAU_PROFILE_START(tautimer);
 
   if (datatype != MPI_DATATYPE_NULL) {
-    PMPI_Type_size( datatype, &typesize );
+  PMPI_Type_size( datatype, &typesize );
   }
-  if (TauEnv_get_track_message()) {
-    if (dest != MPI_PROC_NULL) {
-      TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count);
-    }
-  }
-  TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count, 0);
+  // if (TauEnv_get_track_message()) {
+  //   if (dest != MPI_PROC_NULL) {
+  //     TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count);
+  //   }
+  // }
+  // TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count, 0);
   TAU_TRACK_COMM(comm);
 
   returnVal = PMPI_Bsend( buf, count, datatype, dest, tag, comm );
@@ -2340,9 +2490,9 @@ MPI_Request * request;
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Bsend_init( buf, count, datatype, dest, tag, comm, request );
 
-  if (TauEnv_get_track_message()) {
-    TauAddRequestData(RQ_SEND, count, datatype, dest, tag, comm, request, returnVal, 1);
-  }
+  // if (TauEnv_get_track_message()) {
+  //   TauAddRequestData(RQ_SEND, count, datatype, dest, tag, comm, request, returnVal, 1);
+  // }
 
   TAU_PROFILE_STOP(tautimer);
 
@@ -2437,9 +2587,9 @@ MPI_Request * request;
 
   TAU_PROFILE_STOP(tautimer);
 
-  if (TauEnv_get_track_message()) {
-    TauAddRequestData(RQ_RECV, count, datatype, source, tag, comm, request, returnVal, 1);
-  }
+  // if (TauEnv_get_track_message()) {
+  //   TauAddRequestData(RQ_RECV, count, datatype, source, tag, comm, request, returnVal, 1);
+  // }
   return returnVal;
 }
 
@@ -2466,9 +2616,9 @@ MPI_Request * request;
 
   /* we need to store the request and associate it with the size/tag so MPI_Start can
      retrieve it and log the TAU_TRACE_SENDMSG */
-if (TauEnv_get_track_message()) {
-  TauAddRequestData(RQ_SEND, count, datatype, dest, tag, comm, request, returnVal, 1);
-}
+// if (TauEnv_get_track_message()) {
+//   TauAddRequestData(RQ_SEND, count, datatype, dest, tag, comm, request, returnVal, 1);
+// }
 
   TAU_PROFILE_STOP(tautimer);
 
@@ -2527,12 +2677,12 @@ MPI_Request * request;
   if (datatype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( datatype, &typesize );
   }
-  if (TauEnv_get_track_message()) {
-    if (dest != MPI_PROC_NULL) {
-      TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize);
-    }
-  }
-  TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize, 0);
+  // if (TauEnv_get_track_message()) {
+  //   if (dest != MPI_PROC_NULL) {
+  //     TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize);
+  //   }
+  // }
+  // TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize, 0);
 
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Ibsend( buf, count, datatype, dest, tag, comm, request );
@@ -2591,9 +2741,15 @@ MPI_Request * request;
 
   TAU_PROFILE_STOP(tautimer);
 
-  if (TauEnv_get_track_message()) {
-    TauAddRequestData(RQ_RECV, count, datatype, source, tag, comm, request, returnVal, 0);
-  }
+  // if (TauEnv_get_track_message()) {
+  //   TauAddRequestData(RQ_RECV, count, datatype, source, tag, comm, request, returnVal, 0);
+  // }
+
+  #ifdef TAU_EXP_TRACK_COMM
+    int typesize;
+    PMPI_Type_size(datatype, &typesize);
+    fprintf(fp, "%s,%d,,%d,%p,\n", "MPI_Irecv()", TauTranslateRankToWorld(comm, source), typesize * count, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -2616,12 +2772,12 @@ MPI_Request * request;
   if (datatype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( datatype, &typesize3 );
   }
-  if (TauEnv_get_track_message()) {
-    if (dest != MPI_PROC_NULL) {
-      TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize3);
-    }
-  }
-  TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize3, 0);
+  // if (TauEnv_get_track_message()) {
+  //   if (dest != MPI_PROC_NULL) {
+  //     TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize3);
+  //   }
+  // }
+  // TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize3, 0);
 
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Irsend( buf, count, datatype, dest, tag, comm, request );
@@ -2650,16 +2806,20 @@ MPI_Request * request;
   if (datatype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( datatype, &typesize3 );
   }
-  if (TauEnv_get_track_message()) {
-    if (dest != MPI_PROC_NULL) {
-      TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize3);
-    }
-  }
-  TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize3, 0);
+  // if (TauEnv_get_track_message()) {
+  //   if (dest != MPI_PROC_NULL) {
+  //     TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize3);
+  //   }
+  // }
+  // TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize3, 0);
 
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Isend( buf, count, datatype, dest, tag, comm, request );
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    fprintf(fp, "%s,%d,%d,,%p,\n", "MPI_Isend()", TauTranslateRankToWorld(comm, dest), typesize3 * count, (intptr_t)comm);
+  #endif
   return returnVal;
 }
 
@@ -2678,15 +2838,13 @@ MPI_Request * request;
   TAU_PROFILE_TIMER(tautimer, "MPI_Issend()",  " ", TAU_MESSAGE);
   TAU_PROFILE_START(tautimer);
 
-  if (datatype != MPI_DATATYPE_NULL) {
-    PMPI_Type_size( datatype, &typesize3 );
-  }
-  if (TauEnv_get_track_message()) {
-    if (dest != MPI_PROC_NULL) {
-      TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize3);
-    }
-  }
-  TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize3, 0);
+  // PMPI_Type_size( datatype, &typesize3 );
+  // if (TauEnv_get_track_message()) {
+  //   if (dest != MPI_PROC_NULL) {
+  //     TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize3);
+  //   }
+  // }
+  // TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), count * typesize3, 0);
 
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Issend( buf, count, datatype, dest, tag, comm, request );
@@ -2772,33 +2930,39 @@ MPI_Status * status;
 
   // plugins need the status, too
   //if (TauEnv_get_track_message()) {
-    if (status == MPI_STATUS_IGNORE) {
-      status = &local_status;
-    }
+    // if (status == MPI_STATUS_IGNORE) {
+    //   status = &local_status;
+    // }
   //}
 
   TAU_TRACK_COMM(comm);
 
-  TAU_MSG_RECV_PROLOG();
+  // TAU_MSG_RECV_PROLOG();
   returnVal = PMPI_Recv( buf, count, datatype, source, tag, comm, status );
 
-  if (source != MPI_PROC_NULL && returnVal == MPI_SUCCESS) {
-    /* note that status->MPI_COMM must == comm */
-    if (TauEnv_get_track_message()) {
-      PMPI_Get_count( status, MPI_BYTE, &size );
-      TAU_TRACE_RECVMSG(status->MPI_TAG, TauTranslateRankToWorld(comm, status->MPI_SOURCE), size);
-    }
-    int typesize = 0;
-    if (datatype != MPI_DATATYPE_NULL) {
-      PMPI_Type_size( datatype, &typesize );
-    }
-    if (status == NULL) {
-        TAU_PLUGIN_RECVMSG(tag, TauTranslateRankToWorld(comm, source), count*typesize, 0);
-    } else {
-        TAU_PLUGIN_RECVMSG(status->MPI_TAG, TauTranslateRankToWorld(comm, status->MPI_SOURCE), count*typesize, 0);
-    }
-  }
+  // if (source != MPI_PROC_NULL && returnVal == MPI_SUCCESS) {
+  //   /* note that status->MPI_COMM must == comm */
+  //   // if (TauEnv_get_track_message()) {
+  //   //   PMPI_Get_count( status, MPI_BYTE, &size );
+  //   //   TAU_TRACE_RECVMSG(status->MPI_TAG, TauTranslateRankToWorld(comm, status->MPI_SOURCE), size);
+  //   // }
+  //   int typesize = 0;
+  //   if (datatype != MPI_DATATYPE_NULL) {
+  //     PMPI_Type_size( datatype, &typesize );
+  //   }
+  //   if (status == NULL) {
+  //       TAU_PLUGIN_RECVMSG(tag, TauTranslateRankToWorld(comm, source), count*typesize, 0);
+  //   } else {
+  //       TAU_PLUGIN_RECVMSG(status->MPI_TAG, TauTranslateRankToWorld(comm, status->MPI_SOURCE), count*typesize, 0);
+  //   }
+  // }
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    int typesize;
+    PMPI_Type_size(datatype, &typesize);
+    fprintf(fp, "%s,%d,,%d,%p,\n", "MPI_Recv()", TauTranslateRankToWorld(comm, source), typesize * count, (intptr_t)comm);
+  #endif
 
   return returnVal;
 }
@@ -2820,12 +2984,12 @@ MPI_Comm comm;
   if (datatype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( datatype, &typesize );
   }
-  if (TauEnv_get_track_message()) {
-    if (dest != MPI_PROC_NULL) {
-      TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count);
-    }
-  }
-  TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count, 0);
+  // if (TauEnv_get_track_message()) {
+  //   if (dest != MPI_PROC_NULL) {
+  //     TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count);
+  //   }
+  // }
+  // TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count, 0);
 
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Rsend( buf, count, datatype, dest, tag, comm );
@@ -2852,9 +3016,9 @@ MPI_Request * request;
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Rsend_init( buf, count, datatype, dest, tag, comm, request );
 
-if (TauEnv_get_track_message()) {
-  TauAddRequestData(RQ_SEND, count, datatype, dest, tag, comm, request, returnVal, 1);
-}
+// if (TauEnv_get_track_message()) {
+//   TauAddRequestData(RQ_SEND, count, datatype, dest, tag, comm, request, returnVal, 1);
+// }
 
   TAU_PROFILE_STOP(tautimer);
 
@@ -2881,18 +3045,22 @@ MPI_Comm comm;
   }
   TAU_MSG_SEND_PROLOG();
 
-  if (TauEnv_get_track_message()) {
-    if (dest != MPI_PROC_NULL) {
-      TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count);
-    }
-  }
-  TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count, 0);
+  // if (TauEnv_get_track_message()) {
+  //   if (dest != MPI_PROC_NULL) {
+  //     TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count);
+  //   }
+  // }
+  // TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count, 0);
 
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Send( buf, count, datatype, dest, tag, comm );
-  TAU_PROFILE_PARAM1L(Tau_get_message_send_path(), "message send path id");
+  //TAU_PROFILE_PARAM1L(Tau_get_message_send_path(), "message send path id");
 
   TAU_PROFILE_STOP(tautimer);
+
+  #ifdef TAU_EXP_TRACK_COMM
+    fprintf(fp, "%s,%d,%d,,%p,\n", "MPI_Send()", TauTranslateRankToWorld(comm, dest), typesize * count, (intptr_t)comm);
+  #endif
   return returnVal;
 }
 
@@ -2912,46 +3080,44 @@ MPI_Status * status;
 {
   int  returnVal;
   MPI_Status local_status;
-  int typesize1 = 0;
+  int typesize1;
   int count;
 
 
   TAU_PROFILE_TIMER(tautimer, "MPI_Sendrecv()",  " ", TAU_MESSAGE);
   TAU_PROFILE_START(tautimer);
-  if (sendtype != MPI_DATATYPE_NULL) {
-    PMPI_Type_size( sendtype, &typesize1 );
-  }
-  if (TauEnv_get_track_message()) {
-    if (dest != MPI_PROC_NULL) {
-      TAU_TRACE_SENDMSG(sendtag, TauTranslateRankToWorld(comm, dest), typesize1*sendcount);
-    }
-  }
+  // if (sendtype != MPI_DATATYPE_NULL) {
+  //   PMPI_Type_size( sendtype, &typesize1 );
+  // }
+  // if (TauEnv_get_track_message()) {
+  //   if (dest != MPI_PROC_NULL) {
+  //     TAU_TRACE_SENDMSG(sendtag, TauTranslateRankToWorld(comm, dest), typesize1*sendcount);
+  //   }
+  // }
 
-    // plugins need the status, too
-    if (status == MPI_STATUS_IGNORE) {
-      status = &local_status;
-    }
+  //   // plugins need the status, too
+  //   if (status == MPI_STATUS_IGNORE) {
+  //     status = &local_status;
+  //   }
 
-  TAU_PLUGIN_SENDMSG(sendtag, TauTranslateRankToWorld(comm, dest), typesize1*sendcount, 0);
+  // TAU_PLUGIN_SENDMSG(sendtag, TauTranslateRankToWorld(comm, dest), typesize1*sendcount, 0);
 
-  TAU_TRACK_COMM(comm);
-  returnVal = PMPI_Sendrecv( sendbuf, sendcount, sendtype, dest, sendtag, recvbuf, recvcount, recvtype, source, recvtag, comm, status );
+  // TAU_TRACK_COMM(comm);
+  // returnVal = PMPI_Sendrecv( sendbuf, sendcount, sendtype, dest, sendtag, recvbuf, recvcount, recvtype, source, recvtag, comm, status );
 
-  if (source != MPI_PROC_NULL && returnVal == MPI_SUCCESS) {
-    if (TauEnv_get_track_message()) {
-      PMPI_Get_count( status, MPI_BYTE, &count );
-      TAU_TRACE_RECVMSG(status->MPI_TAG, TauTranslateRankToWorld(comm, status->MPI_SOURCE), count);
-    }
-    int typesize = 0;
-    if (recvtype != MPI_DATATYPE_NULL) {
-      PMPI_Type_size( recvtype, &typesize );
-    }
-    if (status == NULL) {
-        TAU_PLUGIN_RECVMSG(recvtag, TauTranslateRankToWorld(comm, source), count*typesize, 0);
-    } else {
-        TAU_PLUGIN_RECVMSG(status->MPI_TAG, TauTranslateRankToWorld(comm, status->MPI_SOURCE), count*typesize, 0);
-    }
-  }
+  // if (source != MPI_PROC_NULL && returnVal == MPI_SUCCESS) {
+  //   if (TauEnv_get_track_message()) {
+  //     PMPI_Get_count( status, MPI_BYTE, &count );
+  //     TAU_TRACE_RECVMSG(status->MPI_TAG, TauTranslateRankToWorld(comm, status->MPI_SOURCE), count);
+  //   }
+  //   int typesize = 0;
+  //   PMPI_Type_size( recvtype, &typesize );
+  //   if (status == NULL) {
+  //       TAU_PLUGIN_RECVMSG(recvtag, TauTranslateRankToWorld(comm, source), count*typesize, 0);
+  //   } else {
+  //       TAU_PLUGIN_RECVMSG(status->MPI_TAG, TauTranslateRankToWorld(comm, status->MPI_SOURCE), count*typesize, 0);
+  //   }
+  // }
   TAU_PROFILE_STOP(tautimer);
 
   return returnVal;
@@ -2979,36 +3145,36 @@ MPI_Status * status;
   if (datatype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( datatype, &typesize2 );
   }
-  if (TauEnv_get_track_message()) {
-    if (dest != MPI_PROC_NULL) {
-      TAU_TRACE_SENDMSG(sendtag, TauTranslateRankToWorld(comm, dest), typesize2*count);
-    }
-  }
+  // if (TauEnv_get_track_message()) {
+  //   if (dest != MPI_PROC_NULL) {
+  //     TAU_TRACE_SENDMSG(sendtag, TauTranslateRankToWorld(comm, dest), typesize2*count);
+  //   }
+  // }
 
     // plugins need the status, too
-    if (status == MPI_STATUS_IGNORE) {
-      status = &local_status;
-    }
-  TAU_PLUGIN_SENDMSG(sendtag, TauTranslateRankToWorld(comm, dest), typesize2*count, 0);
+    // if (status == MPI_STATUS_IGNORE) {
+    //   status = &local_status;
+    // }
+  // TAU_PLUGIN_SENDMSG(sendtag, TauTranslateRankToWorld(comm, dest), typesize2*count, 0);
 
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Sendrecv_replace( buf, count, datatype, dest, sendtag, source, recvtag, comm, status );
 
-  if (dest != MPI_PROC_NULL && returnVal == MPI_SUCCESS) {
-    if (TauEnv_get_track_message()) {
-      PMPI_Get_count( status, MPI_BYTE, &size1 );
-      TAU_TRACE_RECVMSG(status->MPI_TAG, TauTranslateRankToWorld(comm, status->MPI_SOURCE), size1);
-    }
-    int typesize = 0;
-    if (datatype != MPI_DATATYPE_NULL) {
-      PMPI_Type_size( datatype, &typesize );
-    }
-    if (status == NULL) {
-        TAU_PLUGIN_RECVMSG(recvtag, TauTranslateRankToWorld(comm, source), count*typesize, 0);
-    } else {
-        TAU_PLUGIN_RECVMSG(status->MPI_TAG, TauTranslateRankToWorld(comm, status->MPI_SOURCE), count*typesize, 0);
-    }
-  }
+  // if (dest != MPI_PROC_NULL && returnVal == MPI_SUCCESS) {
+  //   if (TauEnv_get_track_message()) {
+  //     PMPI_Get_count( status, MPI_BYTE, &size1 );
+  //     TAU_TRACE_RECVMSG(status->MPI_TAG, TauTranslateRankToWorld(comm, status->MPI_SOURCE), size1);
+  //   }
+  //   int typesize = 0;
+  //   if (datatype != MPI_DATATYPE_NULL) {
+  //     PMPI_Type_size( datatype, &typesize );
+  //   }
+  //   if (status == NULL) {
+  //       TAU_PLUGIN_RECVMSG(recvtag, TauTranslateRankToWorld(comm, source), count*typesize, 0);
+  //   } else {
+  //       TAU_PLUGIN_RECVMSG(status->MPI_TAG, TauTranslateRankToWorld(comm, status->MPI_SOURCE), count*typesize, 0);
+  //   }
+  // }
   TAU_PROFILE_STOP(tautimer);
 
   return returnVal;
@@ -3030,12 +3196,12 @@ MPI_Comm comm;
   if (datatype != MPI_DATATYPE_NULL) {
     PMPI_Type_size( datatype, &typesize );
   }
-  if (TauEnv_get_track_message()) {
-    if (dest != MPI_PROC_NULL) {
-      TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count);
-    }
-  }
-  TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count, 0);
+  // if (TauEnv_get_track_message()) {
+  //   if (dest != MPI_PROC_NULL) {
+  //     TAU_TRACE_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count);
+  //   }
+  // }
+  // TAU_PLUGIN_SENDMSG(tag, TauTranslateRankToWorld(comm, dest), typesize*count, 0);
 
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Ssend( buf, count, datatype, dest, tag, comm );
@@ -3064,9 +3230,9 @@ MPI_Request * request;
   TAU_TRACK_COMM(comm);
   returnVal = PMPI_Ssend_init( buf, count, datatype, dest, tag, comm, request );
 
-if (TauEnv_get_track_message()) {
-  TauAddRequestData(RQ_SEND, count, datatype, dest, tag, comm, request, returnVal, 1);
-}
+// if (TauEnv_get_track_message()) {
+//   TauAddRequestData(RQ_SEND, count, datatype, dest, tag, comm, request, returnVal, 1);
+// }
 
   TAU_PROFILE_STOP(tautimer);
 
@@ -3082,17 +3248,17 @@ MPI_Request * request;
   TAU_PROFILE_TIMER(tautimer, "MPI_Start()",  " ", TAU_MESSAGE);
   TAU_PROFILE_START(tautimer);
 
-  if (TauEnv_get_track_message()) {
-    rq = TauGetRequestData(request);
-    TauProcessSend(request, "MPI_Start");
-  }
+  // if (TauEnv_get_track_message()) {
+  //   rq = TauGetRequestData(request);
+  //   TauProcessSend(request, "MPI_Start");
+  // }
 
   returnVal = PMPI_Start( request );
 
-  if (TauEnv_get_track_message()) {
-    /* fix up the request since MPI_Start may (will) change it */
-    rq->request = request;
-  }
+  // if (TauEnv_get_track_message()) {
+  //   /* fix up the request since MPI_Start may (will) change it */
+  //   rq->request = request;
+  // }
 
   TAU_PROFILE_STOP(tautimer);
   return returnVal;
@@ -4037,34 +4203,38 @@ int TauGetMpiRank(void)
 */
 
 
+//name,ranks,myrank,comm_ptr
 char * Tau_printRanks(void *comm_ptr) {
-  /* Create an array of ranks and fill it in using MPI_Group_translate_ranks*/
-  /* Fill in a character array that we can append to the name and make it accessible using a map */
+    /* Create an array of ranks and fill it in using MPI_Group_translate_ranks*/
+    /* Fill in a character array that we can append to the name and make it accessible using a map */
 
-  int i, limit, size;
-  char name[16384];
-  char rankbuffer[256];
-  int worldrank;
-  MPI_Comm comm = (MPI_Comm)(intptr_t) comm_ptr;
-  memset(name, 0, 16384);
+    int i, limit, size, len, myrank;
+    char name[16384];
+    char rankbuffer[2048];
+    int worldrank;
+    MPI_Comm comm = (MPI_Comm)(intptr_t)comm_ptr;
+    memset(name, 0, 16384);
 
-  PMPI_Comm_size(comm, &size);
-  limit = (size < TAU_MAX_MPI_RANKS) ? size : TAU_MAX_MPI_RANKS;
-  for ( i = 0; i < limit; i++) {
-    worldrank = TauTranslateRankToWorld(comm, i);
-    if (i == 0) {
-      sprintf(rankbuffer, "ranks: %d", worldrank);
-    } else {
-      sprintf(rankbuffer, ", %d", worldrank);
+    PMPI_Comm_size(comm, &size);
+    PMPI_Comm_get_name(comm, name, &len);
+    PMPI_Comm_rank(comm, &myrank);
+    myrank = TauTranslateRankToWorld(comm, myrank);
+    limit = (size < TAU_MAX_MPI_RANKS) ? size : TAU_MAX_MPI_RANKS;
+    for ( i = 0; i < limit; i++) {
+        worldrank = TauTranslateRankToWorld(comm, i);
+        if (i == 0) {
+            sprintf(rankbuffer, ",%d", worldrank);
+        } else {
+            sprintf(rankbuffer, ".%d", worldrank);
+        }
+        strcat(name, rankbuffer);
     }
+    if (limit < size) {
+        strcat(name, " ...");
+    }
+    sprintf(rankbuffer, ",%d,%p", myrank, (intptr_t)comm_ptr);
     strcat(name, rankbuffer);
-  }
-  if (limit < size) {
-    strcat(name, " ...");
-  }
-  sprintf(rankbuffer,"> <addr=%p", comm_ptr);
-  strcat(name, rankbuffer);
-  return strdup(name);
+    return strdup(name);
 
 
 }

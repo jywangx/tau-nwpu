@@ -213,9 +213,9 @@ void TauUserEvent::TriggerEvent(TAU_EVENT_DATATYPE data, int tid, double timesta
         TauTraceEvent(eventId, (x_uint64)0, tid, (x_uint64)timestamp, use_ts, TAU_TRACE_EVENT_KIND_USEREVENT);
       }
 #else
-      TauTraceEvent(eventId, (x_uint64)0, tid, (x_uint64)timestamp, use_ts, TAU_TRACE_EVENT_KIND_USEREVENT);
+      //TauTraceEvent(eventId, (x_uint64)0, tid, (x_uint64)timestamp, use_ts, TAU_TRACE_EVENT_KIND_USEREVENT);
       TauTraceEvent(eventId, (x_uint64)data, tid, (x_uint64)timestamp, use_ts, TAU_TRACE_EVENT_KIND_USEREVENT);
-      TauTraceEvent(eventId, (x_uint64)0, tid, (x_uint64)timestamp, use_ts, TAU_TRACE_EVENT_KIND_USEREVENT);
+      //TauTraceEvent(eventId, (x_uint64)0, tid, (x_uint64)timestamp, use_ts, TAU_TRACE_EVENT_KIND_USEREVENT);
 #endif /* TAU_OTF2 */
     }
 #endif /* TAU_EPILOG */

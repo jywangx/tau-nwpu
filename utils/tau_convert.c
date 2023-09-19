@@ -2499,7 +2499,7 @@ int main (int argc, char *argv[])
         fprintf (outfp, "%5ld %30.30s %12I64u %6d %6d %12I64d\n",
                  intrc.numrec, ptr, event_GetTi(&intrc,erec,0), GetNodeId(&intrc,erec), event_GetTid(&intrc,erec,0), event_GetPar(&intrc,erec,0));
 #else
-        fprintf (outfp, "%5ld %30.30s %12llu %6d %6d %12lld\n",
+        fprintf (outfp, "%-5ld %-32s %12llu %6d %6d %12lld\n",
                  intrc.numrec, ptr, event_GetTi(&intrc,erec,0), GetNodeId(&intrc,erec), event_GetTid(&intrc,erec,0), event_GetPar(&intrc,erec,0));
 #endif
         }
@@ -2510,7 +2510,7 @@ int main (int argc, char *argv[])
         fprintf (outfp, "%5ld %30.30s %12I64u %6d %6d\n",
                  intrc.numrec, ptr, event_GetTi(&intrc,erec,0), GetNodeId(&intrc,erec), event_GetTid(&intrc,erec,0));
 #else
-        fprintf (outfp, "%5ld %30.30s %12llu %6d %6d\n",
+        fprintf (outfp, "%-5ld %-32s %12llu %6d %6d\n",
                  intrc.numrec, ptr, event_GetTi(&intrc,erec,0), GetNodeId(&intrc,erec), event_GetTid(&intrc,erec,0));
 #endif
         /* Changed 12lu to 12llu for unsigned long long time */
